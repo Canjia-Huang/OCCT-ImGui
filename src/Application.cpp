@@ -8,7 +8,7 @@
 #include <cstdlib>
 #include <thread>
 
-#include "fonts/roboto_medium.h"
+#include <string>
 
 static Application* g_app = nullptr;
 
@@ -242,17 +242,14 @@ void Application::initImGui() {
     pixelRatio_ = (float)fbW / (float)wndW;
 
     // Font + UI scaling.
-    // Pixel size = (fontSize / pixelRatio * hidpi).
     float xscale, yscale;
     glfwGetWindowContentScale(window_, &xscale, &yscale);
     float hidpi = 0.5f * (xscale + yscale);
     float fontSize = 18.0f;
     float loadedFontSize = fontSize * hidpi / pixelRatio_;
 
-    io.Fonts->AddFontFromMemoryCompressedTTF(
-        roboto_medium_compressed_data,
-        roboto_medium_compressed_size,
-        loadedFontSize);
+    std::string fontPath = std::string(FONTS_DIR) + "/Roboto-SemiBold.ttf";
+    io.Fonts->AddFontFromFileTTF(fontPath.c_str(), loadedFontSize);
 
     // UI scaling = font_size / 16 * hidpi / pixel_ratio
     fontScale_ = fontSize / 16.0f * hidpi / pixelRatio_;
@@ -296,7 +293,7 @@ void Application::applyStyle() {
     set(ImGuiCol_ChildBg,            0.94f, 0.94f, 0.94f, 0.00f);
     set(ImGuiCol_PopupBg,            0.97f, 0.97f, 0.97f, 0.94f);
 
-    set(ImGuiCol_Text,               0.10f, 0.10f, 0.10f, 1.00f);
+    set(ImGuiCol_Text,               0.00f, 0.00f, 0.00f, 1.00f);
     set(ImGuiCol_TextDisabled,       0.50f, 0.50f, 0.50f, 1.00f);
 
     set(ImGuiCol_Border,             0.70f, 0.70f, 0.70f, 0.50f);
