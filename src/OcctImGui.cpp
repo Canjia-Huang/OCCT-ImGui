@@ -20,6 +20,11 @@
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
+// imoguizmo MUST be included before any OCCT headers to avoid operator
+// overload conflicts with ImVec2 arithmetic.
+#define IMGUI_DEFINE_MATH_OPERATORS
+#include "imoguizmo.hpp"
+
 #include "OcctImGui.h"
 #include "OcctViewer.h"
 #include "imgui.h"
@@ -127,6 +132,23 @@ void Viewer::init() {
 void Viewer::drawGui() {
     if (showObjectPanel_) drawObjectPanel();
     if (showViewerPanel_) drawViewerPanel();  // Application::drawViewerPanel
+
+    // ── Orientation gizmo (top-right corner) ──
+    float viewMat[16], projMat[16];
+    viewer()->getCameraMatrices(viewMat, projMat);
+
+    float gizmoSize = 120.0f;
+    ImVec2 vpSize = ImGui::GetMainViewport()->Size;
+    ImOGuizmo::SetRect(vpSize.x - gizmoSize - 8.0f, 28.0f, gizmoSize);
+
+    ImOGuizmo::BeginFrame();
+
+    auto cam = viewer()->view()->Camera();
+    float pivotDist = static_cast<float>(cam->Distance());
+
+    if (ImOGuizmo::DrawGizmo(viewMat, projMat, pivotDist, ImOGuizmo::CoordinateSystem::YZX)) {
+        viewer()->setCameraFromViewMatrix(viewMat);
+    }
 }
 
 void Viewer::postFrame() {

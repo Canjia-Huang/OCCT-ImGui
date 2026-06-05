@@ -229,7 +229,53 @@ void OcctViewer::clearSelection() {
     context_->ClearSelected(true);
 }
 
-// ─── Import / Export ──────────────────────────────────────────────────────
+// ─── Camera matrix helpers ────────────────────────────────────────────
+
+void OcctViewer::getCameraMatrices(float viewMat[16], float projMat[16]) const {
+    if (view_.IsNull()) return;
+    auto cam = view_->Camera();
+    if (cam.IsNull()) return;
+
+    const Graphic3d_Mat4& view = cam->OrientationMatrixF();
+    const Graphic3d_Mat4& proj = cam->ProjectionMatrixF();
+
+    memcpy(viewMat, view.GetData(), 16 * sizeof(float));
+    memcpy(projMat, proj.GetData(), 16 * sizeof(float));
+}
+
+void OcctViewer::setCameraFromViewMatrix(const float viewMat[16]) {
+    if (view_.IsNull()) return;
+    auto cam = view_->Camera();
+    if (cam.IsNull()) return;
+
+    // Extract rotation matrix R (upper-left 3x3) from column-major view matrix
+    // Column-major: mat[col*4 + row]
+    float r00 = viewMat[0], r10 = viewMat[1], r20 = viewMat[2];
+    float r01 = viewMat[4], r11 = viewMat[5], r21 = viewMat[6];
+    float r02 = viewMat[8], r12 = viewMat[9], r22 = viewMat[10];
+    float tx  = viewMat[12], ty = viewMat[13], tz = viewMat[14];
+
+    // Recover eye position: e = -R^T * t
+    gp_Pnt eye(
+        -(r00 * tx + r01 * ty + r02 * tz),
+        -(r10 * tx + r11 * ty + r12 * tz),
+        -(r20 * tx + r21 * ty + r22 * tz));
+
+    // Forward direction: -column2  (camera looks down -Z in eye space)
+    gp_Dir forward(-r02, -r12, -r22);
+
+    // Up direction: column1
+    gp_Dir up(r01, r11, r21);
+
+    Standard_Real dist = cam->Distance();
+    gp_Pnt center(eye.X() + forward.X() * dist,
+                  eye.Y() + forward.Y() * dist,
+                  eye.Z() + forward.Z() * dist);
+
+    cam->SetEyeAndCenter(eye, center);
+    cam->SetUp(up);
+    view_->Redraw();
+}
 
 static const char* fileExt(const char* path) {
     const char* e = strrchr(path, '.');

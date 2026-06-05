@@ -1,0 +1,3 @@
+[submodule "deps/imoguizmo"]
+	path = deps/imoguizmo
+	url = https://github.com/fknfilewalker/imoguizmo.git
