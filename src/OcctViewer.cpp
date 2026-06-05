@@ -68,6 +68,7 @@
 
 #include <cstdio>
 #include <cstring>
+#include <cmath>
 
 // ─── OcctViewer ────────────────────────────────────────────────────────────
 
@@ -236,11 +237,62 @@ void OcctViewer::getCameraMatrices(float viewMat[16], float projMat[16]) const {
     auto cam = view_->Camera();
     if (cam.IsNull()) return;
 
-    const Graphic3d_Mat4& view = cam->OrientationMatrixF();
-    const Graphic3d_Mat4& proj = cam->ProjectionMatrixF();
+    // Build a standard OpenGL lookAt view matrix from the camera's eye/center/up.
+    // We build this manually (rather than using OCCT's OrientationMatrixF()) because
+    // OCCT uses a non-standard translation convention that breaks the round-trip,
+    // and the camera scale baked into OrientationMatrixF() amplifies axis projections.
+    gp_Pnt eyeP = cam->Eye();
+    gp_Pnt ctrP = cam->Center();
+    gp_Dir upDir = cam->Up();
 
-    memcpy(viewMat, view.GetData(), 16 * sizeof(float));
-    memcpy(projMat, proj.GetData(), 16 * sizeof(float));
+    float fx = static_cast<float>(ctrP.X() - eyeP.X());
+    float fy = static_cast<float>(ctrP.Y() - eyeP.Y());
+    float fz = static_cast<float>(ctrP.Z() - eyeP.Z());
+    float flen = sqrtf(fx * fx + fy * fy + fz * fz);
+    if (flen > 1e-10f) { fx /= flen; fy /= flen; fz /= flen; }
+
+    float ux = static_cast<float>(upDir.X());
+    float uy = static_cast<float>(upDir.Y());
+    float uz = static_cast<float>(upDir.Z());
+
+    // right = normalize(cross(f, up))
+    float rx = fy * uz - fz * uy;
+    float ry = fz * ux - fx * uz;
+    float rz = fx * uy - fy * ux;
+    float rlen = sqrtf(rx * rx + ry * ry + rz * rz);
+    if (rlen > 1e-10f) { rx /= rlen; ry /= rlen; rz /= rlen; }
+
+    // re-orthogonalize up = cross(right, f)
+    ux = ry * fz - rz * fy;
+    uy = rz * fx - rx * fz;
+    uz = rx * fy - ry * fx;
+
+    float ex = static_cast<float>(eyeP.X());
+    float ey = static_cast<float>(eyeP.Y());
+    float ez = static_cast<float>(eyeP.Z());
+
+    // Row-major OpenGL view matrix (RHS, camera looks along -Z in view space)
+    viewMat[0]  = rx;  viewMat[4]  = ry;  viewMat[8]  = rz;  viewMat[12] = -(rx * ex + ry * ey + rz * ez);
+    viewMat[1]  = ux;  viewMat[5]  = uy;  viewMat[9]  = uz;  viewMat[13] = -(ux * ex + uy * ey + uz * ez);
+    viewMat[2]  = -fx; viewMat[6]  = -fy; viewMat[10] = -fz; viewMat[14] =  (fx * ex + fy * ey + fz * ez);
+    viewMat[3]  = 0;   viewMat[7]  = 0;   viewMat[11] = 0;   viewMat[15] = 1;
+
+    // Build projection matrix manually — OCCT's ProjectionMatrixF() uses a
+    // non-standard FOV that causes axis projections to collapse.
+    // Use aspect=1 since the gizmo draws in a 120x120 square — the main viewport's
+    // non-square aspect would otherwise make the aspect correction in the gizmo
+    // library apply unevenly to X vs Y axis projection (only VP[0] and VP[8] get
+    // the aspect multiplication, leaving VP[4] (Y-axis X-component) uncorrected).
+    float fov = static_cast<float>(cam->FOVy());
+    if (fov < 0.01f || fov > 3.0f) fov = 45.0f * 3.14159265f / 180.0f;
+    float f = 1.0f / tanf(fov * 0.5f);
+    float zn = 0.1f, zf = 10000.0f;
+
+    // Row-major perspective projection matrix (square aspect for the gizmo)
+    projMat[0] = f;       projMat[4] = 0;           projMat[8]  = 0;                         projMat[12] = 0;
+    projMat[1] = 0;       projMat[5] = f;           projMat[9]  = 0;                         projMat[13] = 0;
+    projMat[2] = 0;       projMat[6] = 0;           projMat[10] = -(zf + zn) / (zf - zn);    projMat[14] = -1;
+    projMat[3] = 0;       projMat[7] = 0;           projMat[11] = -(2 * zf * zn) / (zf - zn); projMat[15] = 0;
 }
 
 void OcctViewer::setCameraFromViewMatrix(const float viewMat[16]) {
@@ -248,24 +300,29 @@ void OcctViewer::setCameraFromViewMatrix(const float viewMat[16]) {
     auto cam = view_->Camera();
     if (cam.IsNull()) return;
 
-    // Extract rotation matrix R (upper-left 3x3) from column-major view matrix
-    // Column-major: mat[col*4 + row]
-    float r00 = viewMat[0], r10 = viewMat[1], r20 = viewMat[2];
-    float r01 = viewMat[4], r11 = viewMat[5], r21 = viewMat[6];
-    float r02 = viewMat[8], r12 = viewMat[9], r22 = viewMat[10];
-    float tx  = viewMat[12], ty = viewMat[13], tz = viewMat[14];
+    // The view matrix is row-major OpenGL RHS lookAt matching our getCameraMatrices:
+    //   col0 = right       → viewMat[0],  viewMat[4],  viewMat[8]
+    //   col1 = up          → viewMat[1],  viewMat[5],  viewMat[9]
+    //   col2 = -forward    → viewMat[2],  viewMat[6],  viewMat[10]
+    //   col3 = translation → viewMat[12], viewMat[13], viewMat[14]
+    // where translation = -R * eye (R = [right | up | -forward])
+    // eye = -R^T * translation
 
-    // Recover eye position: e = -R^T * t
+    // The imoguizmo library stores the view matrix in a row-major layout where
+    // each ROW contains one basis vector: row0=right, row1=up, row2=-forward.
+    // The translation is in row3 (elements 12-14). So we extract eye by dotting
+    // each basis vector with the translation — using elements on the SAME row
+    // (not same column) since that's how the gizmo's lookAt builds the matrix.
+    float tx = viewMat[12], ty = viewMat[13], tz = viewMat[14];
     gp_Pnt eye(
-        -(r00 * tx + r01 * ty + r02 * tz),
-        -(r10 * tx + r11 * ty + r12 * tz),
-        -(r20 * tx + r21 * ty + r22 * tz));
+        -(viewMat[0] * tx + viewMat[1] * ty + viewMat[2]  * tz),
+        -(viewMat[4] * tx + viewMat[5] * ty + viewMat[6]  * tz),
+        -(viewMat[8] * tx + viewMat[9] * ty + viewMat[10] * tz));
 
-    // Forward direction: -column2  (camera looks down -Z in eye space)
-    gp_Dir forward(-r02, -r12, -r22);
-
+    // Forward direction (eye → center): -column2
+    gp_Dir forward(-viewMat[2], -viewMat[6], -viewMat[10]);
     // Up direction: column1
-    gp_Dir up(r01, r11, r21);
+    gp_Dir up(viewMat[1], viewMat[5], viewMat[9]);
 
     Standard_Real dist = cam->Distance();
     gp_Pnt center(eye.X() + forward.X() * dist,

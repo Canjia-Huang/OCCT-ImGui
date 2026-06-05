@@ -141,6 +141,12 @@ void Viewer::drawGui() {
     ImVec2 vpSize = ImGui::GetMainViewport()->Size;
     ImOGuizmo::SetRect(vpSize.x - gizmoSize - 8.0f, 28.0f, gizmoSize);
 
+    // Scale down axis length and drag sensitivity for our projection setup.
+    // Default axisLengthScale=0.33 projects axes ~97 px (beyond the 60 px radius).
+    // Default dragSensitivity=0.01 gives ~170°/sec at a 5 px/frame drag (far too fast).
+    ImOGuizmo::config.axisLengthScale = 0.18f;
+    ImOGuizmo::config.dragSensitivity = 0.003f;
+
     ImOGuizmo::BeginFrame();
 
     auto cam = viewer()->view()->Camera();
