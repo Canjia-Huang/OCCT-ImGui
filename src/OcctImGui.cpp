@@ -29,11 +29,20 @@
 #include "OcctViewer.h"
 #include "imgui.h"
 
+#include <glad/glad.h>
+
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeSphere.hxx>
 #include <BRepPrimAPI_MakeCylinder.hxx>
+#include <BRep_Builder.hxx>
+#include <BRepBuilderAPI_MakeEdge.hxx>
+#include <BRepBuilderAPI_MakeWire.hxx>
+#include <BRepBuilderAPI_MakeFace.hxx>
+#include <TopoDS_Compound.hxx>
 #include <gp_Trsf.hxx>
 #include <gp_Vec.hxx>
+#include <gp_Pln.hxx>
+#include <Graphic3d_ClipPlane.hxx>
 #include <Quantity_Color.hxx>
 #include <Prs3d_ShadingAspect.hxx>
 
@@ -157,6 +166,10 @@ void Viewer::drawGui() {
     }
 }
 
+void Viewer::preFrame() {
+    Application::preFrame();
+}
+
 void Viewer::postFrame() {
     Application::postFrame();  // rect select handling
 
@@ -173,6 +186,44 @@ void Viewer::postFrame() {
         shapes_.end());
 
     v->updateViewer();
+}
+
+// ─── Import / Export (built-in) ────────────────────────────────────────────
+
+void Viewer::onImport() {
+    char path[1024] = {};
+    if (!OcctViewer::openFileDialog(path, sizeof(path)))
+        return;
+    onImportFile(path);
+}
+
+void Viewer::onImportFile(const char* path) {
+    importFile(path);
+}
+
+void Viewer::onExport() {
+    NCollection_List<TopoDS_Shape> selected;
+    viewer()->getSelectedShapes(selected);
+    if (selected.IsEmpty()) {
+        printf("No shapes selected for export\n");
+        return;
+    }
+
+    char path[1024] = {};
+    if (!OcctViewer::saveFileDialog(path, sizeof(path)))
+        return;
+
+    if (selected.Size() == 1) {
+        viewer()->exportShape(selected.First(), path);
+    } else {
+        TopoDS_Compound compound;
+        BRep_Builder builder;
+        builder.MakeCompound(compound);
+        for (auto& s : selected)
+            builder.Add(compound, s);
+        viewer()->exportShape(compound, path);
+    }
+    printf("Exported: %s\n", path);
 }
 
 // ─── Panels ─────────────────────────────────────────────────────────────────
@@ -293,15 +344,211 @@ void Viewer::drawObjectPanel() {
         ImGui::EndPopup();
     }
 
+    // ── Tool ──
     ImGui::Spacing();
-    ImGui::Text("Add Primitive");
+    ImGui::Text("Tool");
     ImGui::Separator();
 
-    if (ImGui::Button("+ Box",      ImVec2(-1, 0))) addShape(BRepPrimAPI_MakeBox(40, 40, 40).Shape(), 0.30f, 0.60f, 0.50f, "Box");
-    if (ImGui::Button("+ Sphere",   ImVec2(-1, 0))) addShape(BRepPrimAPI_MakeSphere(25).Shape(),     0.40f, 0.80f, 0.60f, "Sphere");
-    if (ImGui::Button("+ Cylinder", ImVec2(-1, 0))) addShape(BRepPrimAPI_MakeCylinder(18, 50).Shape(), 0.27f, 0.50f, 0.68f, "Cylinder");
+    if (ImGui::Checkbox("Clipping", &sectionOn_))
+        pendingActions_.push_back([this](OcctViewer*) { updateClipPlane(); });
+
+    if (sectionOn_) {
+        if (ImGui::Checkbox("Edit Clip", &clipEditOn_))
+            pendingActions_.push_back([this](OcctViewer*) { updateClipPlane(); });
+
+        if (clipEditOn_) {
+            OcctViewer* v = viewer();
+            double xmin, ymin, zmin, xmax, ymax, zmax;
+            v->getBoundingBox(&xmin, &ymin, &zmin, &xmax, &ymax, &zmax);
+            double diag = sqrt((xmax-xmin)*(xmax-xmin) + (ymax-ymin)*(ymax-ymin) + (zmax-zmin)*(zmax-zmin));
+            float range = (float)(diag * 0.8);
+            if (ImGui::SliderFloat("Position", &clipPos_, -range, range))
+                pendingActions_.push_back([this](OcctViewer*) { updateClipPlane(); });
+        }
+    }
 
     ImGui::End();
+}
+
+// ─── Section / clip plane ─────────────────────────────────────────────────
+
+void Viewer::updateClipPlane() {
+    OcctViewer* v = viewer();
+    if (!sectionOn_) {
+        if (v->hasClipPlane(kSectionPlaneId))
+            v->removeClipPlane(kSectionPlaneId);
+        return;
+    }
+
+    if (!v->hasClipPlane(kSectionPlaneId)) {
+        double xmin, ymin, zmin, xmax, ymax, zmax;
+        v->getBoundingBox(&xmin, &ymin, &zmin, &xmax, &ymax, &zmax);
+        clipCenter_ = gp_Pnt((xmin+xmax)*0.5, (ymin+ymax)*0.5, (zmin+zmax)*0.5);
+        gp_Pnt eye = v->view()->Camera()->Eye();
+        clipNormal_ = gp_Dir(clipCenter_.X()-eye.X(), clipCenter_.Y()-eye.Y(), clipCenter_.Z()-eye.Z());
+        gp_Dir camUp = v->view()->Camera()->Up();
+        clipDx_ = gp_Dir(camUp.Y()*clipNormal_.Z()-camUp.Z()*clipNormal_.Y(),
+                         camUp.Z()*clipNormal_.X()-camUp.X()*clipNormal_.Z(),
+                         camUp.X()*clipNormal_.Y()-camUp.Y()*clipNormal_.X());
+        clipDy_ = gp_Dir(clipNormal_.Y()*clipDx_.Z()-clipNormal_.Z()*clipDx_.Y(),
+                         clipNormal_.Z()*clipDx_.X()-clipNormal_.X()*clipDx_.Z(),
+                         clipNormal_.X()*clipDx_.Y()-clipNormal_.Y()*clipDx_.X());
+        v->addClipPlane(kSectionPlaneId, gp_Pln(clipCenter_, clipNormal_));
+    } else if (clipEditOn_) {
+        gp_Pnt origin(clipCenter_.X() + clipNormal_.X()*clipPos_,
+                      clipCenter_.Y() + clipNormal_.Y()*clipPos_,
+                      clipCenter_.Z() + clipNormal_.Z()*clipPos_);
+        v->setClipPlaneEquation(kSectionPlaneId, gp_Pln(origin, clipNormal_));
+    }
+}
+
+void Viewer::drawOverlay() {
+    if (!sectionOn_) return;
+
+    static bool gladLoaded = false;
+    if (!gladLoaded) {
+        gladLoaded = true;
+        gladLoadGLLoader((GLADloadproc)glfwGetProcAddress);
+    }
+
+    // ── Lazy-init GL resources ──────────────────────────────────────────
+    static GLuint prog = 0, vao = 0, vbo = 0;
+    if (!prog) {
+        const char* vsSrc = "#version 150\n"
+            "uniform mat4 uMVP;\n"
+            "in vec3 aPos;\n"
+            "void main() { gl_Position = uMVP * vec4(aPos, 1.0); }";
+        const char* fsSrc = "#version 150\n"
+            "uniform vec3 uColor;\n"
+            "out vec4 outColor;\n"
+            "void main() { outColor = vec4(uColor, 1.0); }";
+
+        auto compile = [](GLenum type, const char* src) {
+            GLuint s = glCreateShader(type);
+            glShaderSource(s, 1, &src, nullptr);
+            glCompileShader(s);
+            return s;
+        };
+        GLuint vs = compile(GL_VERTEX_SHADER, vsSrc);
+        GLuint fs = compile(GL_FRAGMENT_SHADER, fsSrc);
+        prog = glCreateProgram();
+        glAttachShader(prog, vs); glAttachShader(prog, fs);
+        glLinkProgram(prog);
+        glDeleteShader(vs); glDeleteShader(fs);
+
+        glGenVertexArrays(1, &vao);
+        glGenBuffers(1, &vbo);
+    }
+
+    // ── Build world-space clip plane origin ─────────────────────────────
+    OcctViewer* v = viewer();
+    auto cam = v->view()->Camera();
+
+    gp_Pnt planeOrigin(clipCenter_.X() + clipNormal_.X() * clipPos_,
+                      clipCenter_.Y() + clipNormal_.Y() * clipPos_,
+                      clipCenter_.Z() + clipNormal_.Z() * clipPos_);
+
+    double xmin, ymin, zmin, xmax, ymax, zmax;
+    v->getBoundingBox(&xmin, &ymin, &zmin, &xmax, &ymax, &zmax);
+    double diag = sqrt((xmax-xmin)*(xmax-xmin)+(ymax-ymin)*(ymax-ymin)+(zmax-zmin)*(zmax-zmin));
+    float w = (float)(diag * 1.25);
+
+    // ── MVP matrices ────────────────────────────────────────────────────
+    GLint vp[4]; glGetIntegerv(GL_VIEWPORT, vp);
+    float aspect = (vp[2] > 0 && vp[3] > 0) ? (float)vp[2] / (float)vp[3] : 1.0f;
+
+    // --- View matrix (lookAt) ---
+    gp_Pnt eyeP = cam->Eye(), ctrP = cam->Center();
+    gp_Dir upD = cam->Up();
+    float fx = (float)(ctrP.X()-eyeP.X()), fy = (float)(ctrP.Y()-eyeP.Y()), fz = (float)(ctrP.Z()-eyeP.Z());
+    float fl = sqrtf(fx*fx+fy*fy+fz*fz); if (fl>1e-10f) { fx/=fl; fy/=fl; fz/=fl; }
+    float ux=(float)upD.X(), uy=(float)upD.Y(), uz=(float)upD.Z();
+    float rx=fy*uz-fz*uy, ry=fz*ux-fx*uz, rz=fx*uy-fy*ux;
+    float rl=sqrtf(rx*rx+ry*ry+rz*rz); if (rl>1e-10f) { rx/=rl; ry/=rl; rz/=rl; }
+    ux=ry*fz-rz*fy; uy=rz*fx-rx*fz; uz=rx*fy-ry*fx;
+    float ex=(float)eyeP.X(), ey=(float)eyeP.Y(), ez=(float)eyeP.Z();
+
+    float view[16] = {
+        rx, ux, -fx, 0,
+        ry, uy, -fy, 0,
+        rz, uz, -fz, 0,
+        -(rx*ex+ry*ey+rz*ez), -(ux*ex+uy*ey+uz*ez), (fx*ex+fy*ey+fz*ez), 1
+    };
+
+    // --- Projection matrix (perspective) ---
+    float fov = (float)cam->FOVy();
+    if (fov < 0.01f || fov > 3.0f) fov = 0.785398163f; // ~45 deg
+    float f = 1.0f / tanf(fov * 0.5f);
+    float zn = 0.1f, zf = 10000.0f;
+    float proj[16] = {
+        f/aspect, 0, 0, 0,
+        0, f, 0, 0,
+        0, 0, -(zf+zn)/(zf-zn), -1,
+        0, 0, -(2*zf*zn)/(zf-zn), 0
+    };
+
+    // --- Model matrix (clip-plane local → world) ---
+    float model[16] = {
+        (float)(clipDx_.X()*w),    (float)(clipDx_.Y()*w),    (float)(clipDx_.Z()*w),    0,
+        (float)(clipDy_.X()*w),    (float)(clipDy_.Y()*w),    (float)(clipDy_.Z()*w),    0,
+        (float)(clipNormal_.X()),  (float)(clipNormal_.Y()),  (float)(clipNormal_.Z()),  0,
+        (float)planeOrigin.X(),    (float)planeOrigin.Y(),    (float)planeOrigin.Z(),    1
+    };
+
+    // --- MVP = proj * view * model ---
+    auto mul4 = [](const float* A, const float* B, float* R) {
+        for (int i=0; i<4; ++i) {
+            for (int j=0; j<4; ++j) {
+                R[j*4+i] = A[0*4+i]*B[j*4+0] + A[1*4+i]*B[j*4+1]
+                         + A[2*4+i]*B[j*4+2] + A[3*4+i]*B[j*4+3];
+            }
+        }
+    };
+    float vm[16], mvp[16];
+    mul4(view, model, vm);
+    mul4(proj, vm, mvp);
+
+    // ── Draw ────────────────────────────────────────────────────────────
+    // Unit-size cross + square in clip-plane XY (z=0)
+    float lines[] = {
+        -1,0,0, 1,0,0,   0,-1,0, 0,1,0,               // cross
+        // square × 3 for thicker line appearance
+        -1,-1,0, 1,-1,0, 1,-1,0, 1,1,0, 1,1,0, -1,1,0, -1,1,0, -1,-1,0,
+        -1.01f,-1.01f,0, 1.01f,-1.01f,0, 1.01f,-1.01f,0, 1.01f,1.01f,0, 1.01f,1.01f,0, -1.01f,1.01f,0, -1.01f,1.01f,0, -1.01f,-1.01f,0,
+        -1.02f,-1.02f,0, 1.02f,-1.02f,0, 1.02f,-1.02f,0, 1.02f,1.02f,0, 1.02f,1.02f,0, -1.02f,1.02f,0, -1.02f,1.02f,0, -1.02f,-1.02f,0,
+    };
+
+    // Save GL state
+    GLint prevProg=0, prevVAO=0, prevBlend=0, prevDepth=0, prevCull=0;
+    GLboolean prevLineSmooth=GL_FALSE;
+    glGetIntegerv(GL_CURRENT_PROGRAM, &prevProg);
+    glGetIntegerv(GL_VERTEX_ARRAY_BINDING, &prevVAO);
+    prevBlend = glIsEnabled(GL_BLEND);
+    prevDepth = glIsEnabled(GL_DEPTH_TEST);
+    prevCull  = glIsEnabled(GL_CULL_FACE);
+
+    glEnable(GL_DEPTH_TEST);
+    glDepthFunc(GL_LEQUAL);
+    glDisable(GL_BLEND);
+    glDisable(GL_CULL_FACE);
+
+    glUseProgram(prog);
+    glUniformMatrix4fv(glGetUniformLocation(prog, "uMVP"), 1, GL_FALSE, mvp);
+    glUniform3f(glGetUniformLocation(prog, "uColor"), 0.1f, 0.1f, 0.1f);
+
+    glBindVertexArray(vao);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
+    glBufferData(GL_ARRAY_BUFFER, sizeof(lines), lines, GL_STATIC_DRAW);
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, (void*)0);
+    glDrawArrays(GL_LINES, 0, 28);
+
+    // Restore GL state
+    glBindVertexArray(prevVAO);
+    glUseProgram(prevProg);
+    if (!prevBlend) glDisable(GL_BLEND);
+    if (!prevDepth) glDisable(GL_DEPTH_TEST);
+    if (prevCull)   glEnable(GL_CULL_FACE);
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────

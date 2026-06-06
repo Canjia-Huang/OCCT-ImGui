@@ -43,7 +43,11 @@ public:
 protected:
     void init() override;
     void drawGui() override;
+    void preFrame() override;
     void postFrame() override;
+    void onImport() override;
+    void onExport() override;
+    void onImportFile(const char* path) override;
 
 private:
     struct ShapeEntry {
@@ -67,6 +71,9 @@ private:
     };
 
     void drawObjectPanel();
+    void drawOverlay() override;
+    void updateClipPlane();
+    void onClipDrag(float dx, float dy);
     Handle(AIS_Shape) makeColoredShape(const TopoDS_Shape& shape,
                                        float r, float g, float b,
                                        double tx = 0, double ty = 0, double tz = 0);
@@ -75,6 +82,14 @@ private:
     std::vector<PendingShape> pendingShapes_;
     std::vector<std::function<void(OcctViewer*)>> pendingActions_;
     int nextId_ = 0;
+
+    // Section plane state
+    bool sectionOn_  = false;
+    bool clipEditOn_ = false;
+    float clipPos_   = 0.0f;
+    gp_Pnt clipCenter_;
+    gp_Dir clipNormal_, clipDx_, clipDy_;
+    static constexpr int kSectionPlaneId = 999;
 };
 
 } // namespace OcctImGui
