@@ -3,16 +3,15 @@
 ![Windows](https://github.com/Xiaoyanglib/OCCT-ImGui/actions/workflows/build-windows.yml/badge.svg)
 ![macOS](https://github.com/Xiaoyanglib/OCCT-ImGui/actions/workflows/build-macos.yml/badge.svg)
 
-A lightweight CAD viewer built on [OpenCASCADE](https://dev.opencascade.org/) (OCCT) and [Dear ImGui](https://github.com/ocornut/imgui), with [GLFW](https://www.glfw.org/) for windowing and OpenGL rendering.
+A lightweight CAD viewer built on [OpenCASCADE](https://dev.opencascade.org/) (OCCT) and [Dear ImGui](https://github.com/ocornut/imgui).
 
 **Supported platforms:** 💻 Windows · 🍎 macOS ·  *(🐧 Linux is not supported)*
 
 ## ✨ Features
 
-- **3D Shape Viewer** — display, rotate, pan, and zoom CAD models (STEP, IGES, BREP)
-- **Object Panel** — toggle visibility, change colors, add primitives, delete shapes
-- **Selection** — click to select/deselect, Shift+drag for rectangle selection
-- **Import/Export** — load and save CAD files via native file dialogs
+- **3D Shape Viewer** — rotate/pan/zoom, section clipping, orientation gizmo for CAD models (STEP, IGES, BREP)
+- **Object Panel** — toggle visibility, change colors, import/export
+- **Selection** — click select, Shift+drag rectangle select
 
 ## 📁 Project Structure
 
@@ -64,13 +63,25 @@ GLFW, Dear ImGui, ImGuizmo, and Google Test are included as git submodules. glad
 
 ### Prerequisites
 
-Install OpenCASCADE 8.0+:
-
-**macOS:**
-Coming soon.
+Install OpenCASCADE (8.0 or later recommended):
 
 **Windows:**
 Use pre-built binaries from [OCCT Releases](https://github.com/Open-Cascade-SAS/OCCT/releases), or build from source using CMake.
+
+**macOS:**
+Use Homebrew (may not be the latest version):
+```bash
+brew install opencascade
+```
+
+**Source build:**
+To build from source instead (replace `V8_0_0` with the desired version tag):
+```bash
+git clone --depth 1 --branch V8_0_0 https://github.com/Open-Cascade-SAS/OCCT.git
+cmake -B build -S OCCT -DCMAKE_INSTALL_PREFIX=./installed
+cmake --build build -j$(sysctl -n hw.logicalcpu)
+cmake --install build
+```
 
 ### Configure & Build
 
@@ -84,7 +95,9 @@ cmake -B build -S . -DOpenCASCADE_DIR="<occt-install>/lib/cmake/opencascade"
 cmake --build build
 ```
 
-Set `OpenCASCADE_DIR` to the directory containing `OpenCASCADEConfig.cmake` (typically `<occt-install>/lib/cmake/opencascade`).
+Set `OpenCASCADE_DIR` to the directory containing `OpenCASCADEConfig.cmake`:
+- **Pre-built binaries (Windows):** `<occt-install>/cmake`
+- **Homebrew (macOS):** `$(brew --prefix opencascade)/lib/cmake/opencascade`
 
 ## 🎮 Controls
 
@@ -107,9 +120,11 @@ Built with and inspired by these excellent projects:
 - [OpenCASCADE](https://dev.opencascade.org/) — CAD kernel
 - [Dear ImGui](https://github.com/ocornut/imgui) — immediate-mode GUI
 - [GLFW](https://www.glfw.org/) — cross-platform windowing
-- [Geogram](https://github.com/BrunoLevy/geogram) — reference for ImGui + 3D viewer integration
-- [OcctImgui](https://github.com/eryar/OcctImgui) — reference OCCT + ImGui integration
-- [OCC-QT-Demo](https://github.com/ajune-wang/OCC-QT-Demo) — reference for OCCT application patterns
+- [ImGuizmo](https://github.com/fknfilewalker/imoguizmo) — orientation gizmo
+- [glad](https://glad.dav1d.de/) — OpenGL loader
+- [Geogram](https://github.com/BrunoLevy/geogram) — section view and dock layout reference
+- [OcctImGui](https://github.com/eryar/OcctImgui) — OCCT + ImGui integration reference
+- [OCC-QT-Demo](https://github.com/ajune-wang/OCC-QT-Demo) — OCCT application patterns reference
 
 ## 📄 License
 

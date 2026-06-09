@@ -79,7 +79,8 @@ void Viewer::addShape(const TopoDS_Shape& shape, float r, float g, float b,
     if (viewer()) {
         Handle(AIS_Shape) ais = makeColoredShape(shape, r, g, b, tx, ty, tz);
         viewer()->displayShape(ais);
-        shapes_.emplace_back(ais, displayName, true, r, g, b, tx, ty, tz);
+        auto& entry = shapes_.emplace_back(ais, displayName, true, r, g, b, tx, ty, tz);
+        extractFaces(entry, shape, r, g, b, tx, ty, tz);
     } else {
         pendingShapes_.push_back({shape, r, g, b, displayName, tx, ty, tz});
     }
@@ -97,15 +98,11 @@ void Viewer::importFile(const char* path) {
             printf("Import failed: %s\n", p.c_str());
             return;
         }
-        float hue = (nextId_ * 0.37f);
-        float r = 0.30f + 0.20f * sinf(hue);
-        float g = 0.50f + 0.30f * sinf(hue + 2.0f);
-        float b = 0.40f + 0.30f * sinf(hue + 4.0f);
+        float r = 0.7f, g = 0.7f, b = 0.7f;
         Handle(AIS_Shape) ais = new AIS_Shape(shape);
         Handle(Prs3d_ShadingAspect) aspect = new Prs3d_ShadingAspect();
         aspect->SetColor(Quantity_Color(r, g, b, Quantity_TOC_RGB));
         ais->Attributes()->SetShadingAspect(aspect);
-        v->displayShape(ais);
         const char* name = strrchr(p.c_str(), '/');
 #ifdef _WIN32
         const char* bs = strrchr(p.c_str(), '\\');
@@ -115,7 +112,15 @@ void Viewer::importFile(const char* path) {
         char buf[64];
         strncpy(buf, name, sizeof(buf) - 1);
         buf[sizeof(buf) - 1] = '\0';
-        shapes_.emplace_back(ais, buf, true, r, g, b);
+        auto& entry = shapes_.emplace_back(ais, buf, true, r, g, b);
+        extractFaces(entry, shape, r, g, b);
+        if (selectionMode_ == AIS_Shape::SelectionMode(TopAbs_SHAPE) ||
+            selectionMode_ == AIS_Shape::SelectionMode(TopAbs_EDGE)   ||
+            selectionMode_ == AIS_Shape::SelectionMode(TopAbs_VERTEX))
+            v->displayShape(ais);
+        else
+            for (auto& f : entry.faces) v->displayShape(f.aisFace, false);
+        v->setSelectionMode(selectionMode_);
         nextId_++;
     });
 }
@@ -124,13 +129,16 @@ void Viewer::importFile(const char* path) {
 
 void Viewer::init() {
     viewer()->setShadedWithEdges();
+    viewer()->setSelectionMode(selectionMode_);
+    viewer()->setOrthographic(true);
 
     for (auto& ps : pendingShapes_) {
         Handle(AIS_Shape) ais = makeColoredShape(ps.shape, ps.r, ps.g, ps.b,
                                                  ps.tx, ps.ty, ps.tz);
         viewer()->displayShape(ais, false);
-        shapes_.emplace_back(ais, ps.name, true, ps.r, ps.g, ps.b,
-                            ps.tx, ps.ty, ps.tz);
+        auto& entry = shapes_.emplace_back(ais, ps.name, true, ps.r, ps.g, ps.b,
+                                           ps.tx, ps.ty, ps.tz);
+        extractFaces(entry, ps.shape, ps.r, ps.g, ps.b, ps.tx, ps.ty, ps.tz);
     }
     pendingShapes_.clear();
 
@@ -231,6 +239,57 @@ void Viewer::onExport() {
 void Viewer::drawObjectPanel() {
     ImGui::Begin("Objects", &showObjectPanel_);
 
+    // ── View settings ──
+    ImGui::Text("View");
+    ImGui::Separator();
+
+    // Selection mode
+    const char* selModes[] = { "Shape", "Face", "Edge", "Vertex" };
+    int selVals[] = {
+        AIS_Shape::SelectionMode(TopAbs_SHAPE),
+        AIS_Shape::SelectionMode(TopAbs_FACE),
+        AIS_Shape::SelectionMode(TopAbs_EDGE),
+        AIS_Shape::SelectionMode(TopAbs_VERTEX)
+    };
+    int selCur = 0;
+    for (int i = 0; i < 4; ++i) {
+        if (selectionMode_ == selVals[i]) { selCur = i; break; }
+    }
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Select");
+    ImGui::SameLine();
+    ImGui::PushItemWidth(-1);
+    if (ImGui::Combo("##selmode", &selCur, selModes, 4)) {
+        selectionMode_ = selVals[selCur];
+        syncShapeDisplay();
+        viewer()->setSelectionMode(selectionMode_);
+    }
+    ImGui::PopItemWidth();
+
+    // Background color
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Background");
+    ImGui::SameLine();
+    if (ImGui::ColorEdit3("##bgcolor", bgColor_,
+        ImGuiColorEditFlags_NoInputs)) {
+        viewer()->setBackgroundColor(bgColor_[0], bgColor_[1], bgColor_[2]);
+    }
+
+    // Projection
+    ImGui::AlignTextToFramePadding();
+    ImGui::TextUnformatted("Projection");
+    ImGui::SameLine();
+    ImGui::PushItemWidth(-1);
+    const char* projModes[] = { "Orthographic", "Perspective" };
+    int projCur = orthographic_ ? 0 : 1;
+    if (ImGui::Combo("##proj", &projCur, projModes, 2)) {
+        orthographic_ = (projCur == 0);
+        viewer()->setOrthographic(orthographic_);
+    }
+    ImGui::PopItemWidth();
+
+    ImGui::Spacing();
+
     ImGui::Text("Scene Objects");
     ImGui::Separator();
 
@@ -242,25 +301,92 @@ void Viewer::drawObjectPanel() {
         auto& entry = shapes_[i];
         ImGui::PushID(i);
 
+        // ── Parent model row ──
+        bool expanded = entry.facesExpanded;
+        if (!entry.faces.empty()) {
+            ImGui::AlignTextToFramePadding();
+            if (ImGui::ArrowButton("##expand", expanded ?
+                ImGuiDir_Down : ImGuiDir_Right)) {
+                entry.facesExpanded = !expanded;
+            }
+            ImGui::SameLine();
+        } else {
+            ImGui::Dummy(ImVec2(ImGui::GetFrameHeight(), 0));
+            ImGui::SameLine();
+        }
+
         if (ImGui::Checkbox("##vis", &entry.visible)) {
-            auto shape = entry.aisShape;
             bool vis = entry.visible;
-            pendingActions_.push_back([shape, vis](OcctViewer* v) {
-                if (vis) v->displayShape(shape, false);
-                else     v->removeShape(shape, false);
+            for (auto& f : entry.faces) f.visible = vis;
+            auto shape = entry.aisShape;
+            std::vector<Handle(AIS_Shape)> faceShapes;
+            for (auto& f : entry.faces) faceShapes.push_back(f.aisFace);
+            int sm = selectionMode_;
+            bool useModel = (sm == AIS_Shape::SelectionMode(TopAbs_SHAPE) ||
+                             sm == AIS_Shape::SelectionMode(TopAbs_EDGE)   ||
+                             sm == AIS_Shape::SelectionMode(TopAbs_VERTEX));
+            pendingActions_.push_back([shape, faceShapes, vis, useModel](OcctViewer* v) {
+                if (useModel) {
+                    if (vis) v->displayShape(shape, false);
+                    else     v->removeShape(shape, false);
+                } else {
+                    for (auto& fs : faceShapes) {
+                        if (vis) v->displayShape(fs, false);
+                        else     v->removeShape(fs, false);
+                    }
+                }
             });
         }
         ImGui::SameLine();
+        // Rainbow if 2+ faces have different colors
+        bool rainbow = false;
+        if (entry.faces.size() >= 2) {
+            float c0 = entry.faces[0].color[0], c1 = entry.faces[0].color[1], c2 = entry.faces[0].color[2];
+            for (auto& f : entry.faces) {
+                if (f.color[0] != c0 || f.color[1] != c1 || f.color[2] != c2) { rainbow = true; break; }
+            }
+        }
+        ImVec2 swatchPos = ImGui::GetCursorScreenPos();
+        float swatchH = ImGui::GetFrameHeight();
         if (ImGui::ColorEdit3("##color", entry.color,
-            ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel)) {
-            auto shape = entry.aisShape;
+            ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel | ImGuiColorEditFlags_NoBorder)) {
             float r = entry.color[0], g = entry.color[1], b = entry.color[2];
-            pendingActions_.push_back([shape, r, g, b](OcctViewer* v) {
-                Handle(Prs3d_ShadingAspect) aspect = new Prs3d_ShadingAspect();
-                aspect->SetColor(Quantity_Color(r, g, b, Quantity_TOC_RGB));
-                shape->Attributes()->SetShadingAspect(aspect);
+            auto shape = entry.aisShape;
+            for (auto& f : entry.faces) {
+                f.color[0] = r; f.color[1] = g; f.color[2] = b;
+                f.useCustomColor = false;
+            }
+            std::vector<Handle(AIS_Shape)> faceShapes;
+            for (auto& f : entry.faces) faceShapes.push_back(f.aisFace);
+            pendingActions_.push_back([shape, faceShapes, r, g, b](OcctViewer* v) {
+                Handle(Prs3d_ShadingAspect) a = new Prs3d_ShadingAspect();
+                a->SetColor(Quantity_Color(r, g, b, Quantity_TOC_RGB));
+                shape->Attributes()->SetShadingAspect(a);
                 shape->Redisplay(false);
+                for (auto& fs : faceShapes) {
+                    Handle(Prs3d_ShadingAspect) fa = new Prs3d_ShadingAspect();
+                    fa->SetColor(Quantity_Color(r, g, b, Quantity_TOC_RGB));
+                    fs->Attributes()->SetShadingAspect(fa);
+                    fs->Redisplay(false);
+                }
             });
+        }
+        if (rainbow) {
+            // Black rounded background (not via PushStyleColor)
+            float r = ImGui::GetStyle().FrameRounding;
+            ImVec2 swatchEnd(swatchPos.x + swatchH, swatchPos.y + swatchH);
+            ImGui::GetWindowDrawList()->AddRectFilled(swatchPos, swatchEnd, IM_COL32(0,0,0,255), r);
+            // Rainbow inset 2px
+            ImU32 mixed[4] = {
+                IM_COL32(0xFF, 0x33, 0x33, 0xFF),
+                IM_COL32(0x33, 0x99, 0xFF, 0xFF),
+                IM_COL32(0x33, 0xCC, 0x33, 0xFF),
+                IM_COL32(0xFF, 0xCC, 0x00, 0xFF),
+            };
+            ImGui::GetWindowDrawList()->AddRectFilledMultiColor(
+                ImVec2(swatchPos.x + 2, swatchPos.y + 2),
+                ImVec2(swatchPos.x + swatchH - 2, swatchPos.y + swatchH - 2),
+                mixed[0], mixed[1], mixed[2], mixed[3]);
         }
         ImGui::SameLine();
         ImGui::TextUnformatted(entry.name.c_str());
@@ -282,13 +408,57 @@ void Viewer::drawObjectPanel() {
                 pendingActions_.push_back([shape](OcctViewer* v) {
                     v->removeShape(shape, true);
                 });
+                for (auto& f : entry.faces) {
+                    auto ff = f.aisFace;
+                    pendingActions_.push_back([ff](OcctViewer* v) {
+                        v->removeShape(ff, false);
+                    });
+                }
                 entry.aisShape.Nullify();
+                entry.faces.clear();
                 ImGui::CloseCurrentPopup();
             }
             ImGui::SameLine();
             if (ImGui::Button("No", ImVec2(80, 0)))
                 ImGui::CloseCurrentPopup();
             ImGui::EndPopup();
+        }
+
+        // ── Expand: face sub-objects ──
+        if (expanded) {
+            for (auto& f : entry.faces) {
+                ImGui::PushID(1000 + f.id);
+                ImGui::AlignTextToFramePadding();
+                ImGui::Indent(16.0f);
+                char faceLabel[32];
+                snprintf(faceLabel, sizeof(faceLabel), "Face %d", f.id);
+                ImGui::TextUnformatted(faceLabel);
+                ImGui::SameLine();
+                if (ImGui::Checkbox("##fvis", &f.visible)) {
+                    bool vis = f.visible;
+                    pendingActions_.push_back([face = f.aisFace, vis](OcctViewer* v) {
+                        if (vis) v->displayShape(face, false);
+                        else     v->removeShape(face, false);
+                    });
+                }
+                ImGui::SameLine();
+                if (ImGui::ColorEdit3("##fcolor", f.color,
+                    ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel)) {
+                    f.useCustomColor = true;
+                    entry.color[0] = f.color[0];
+                    entry.color[1] = f.color[1];
+                    entry.color[2] = f.color[2];
+                    float fr = f.color[0], fg = f.color[1], fb = f.color[2];
+                    pendingActions_.push_back([face = f.aisFace, fr, fg, fb](OcctViewer* v) {
+                        Handle(Prs3d_ShadingAspect) a = new Prs3d_ShadingAspect();
+                        a->SetColor(Quantity_Color(fr, fg, fb, Quantity_TOC_RGB));
+                        face->Attributes()->SetShadingAspect(a);
+                        face->Redisplay(false);
+                    });
+                }
+                ImGui::Unindent(16.0f);
+                ImGui::PopID();
+            }
         }
 
         ImGui::PopID();
@@ -306,9 +476,11 @@ void Viewer::drawObjectPanel() {
         for (auto& entry : shapes_) {
             if (entry.visible) continue;
             entry.visible = true;
-            auto shape = entry.aisShape;
-            pendingActions_.push_back([shape](OcctViewer* v) {
-                v->displayShape(shape, false);
+            for (auto& f : entry.faces) { f.visible = true; }
+            std::vector<Handle(AIS_Shape)> faceShapes;
+            for (auto& f : entry.faces) faceShapes.push_back(f.aisFace);
+            pendingActions_.push_back([faceShapes](OcctViewer* v) {
+                for (auto& fs : faceShapes) v->displayShape(fs, false);
             });
         }
     }
@@ -317,9 +489,11 @@ void Viewer::drawObjectPanel() {
         for (auto& entry : shapes_) {
             if (!entry.visible) continue;
             entry.visible = false;
-            auto shape = entry.aisShape;
-            pendingActions_.push_back([shape](OcctViewer* v) {
-                v->removeShape(shape, false);
+            for (auto& f : entry.faces) { f.visible = false; }
+            std::vector<Handle(AIS_Shape)> faceShapes;
+            for (auto& f : entry.faces) faceShapes.push_back(f.aisFace);
+            pendingActions_.push_back([faceShapes](OcctViewer* v) {
+                for (auto& fs : faceShapes) v->removeShape(fs, false);
             });
         }
     }
@@ -330,6 +504,12 @@ void Viewer::drawObjectPanel() {
         ImGui::Text("Remove all %d shapes?", (int)shapes_.size());
         if (ImGui::Button("Yes", ImVec2(80, 0))) {
             for (auto& entry : shapes_) {
+                for (auto& f : entry.faces) {
+                    auto ff = f.aisFace;
+                    pendingActions_.push_back([ff](OcctViewer* v) {
+                        v->removeShape(ff, false);
+                    });
+                }
                 auto shape = entry.aisShape;
                 pendingActions_.push_back([shape](OcctViewer* v) {
                     v->removeShape(shape, true);
@@ -549,6 +729,44 @@ void Viewer::drawOverlay() {
     if (!prevBlend) glDisable(GL_BLEND);
     if (!prevDepth) glDisable(GL_DEPTH_TEST);
     if (prevCull)   glEnable(GL_CULL_FACE);
+}
+
+void Viewer::syncShapeDisplay() {
+    int sm = selectionMode_;
+    bool useModel = (sm == AIS_Shape::SelectionMode(TopAbs_SHAPE) ||
+                     sm == AIS_Shape::SelectionMode(TopAbs_EDGE)   ||
+                     sm == AIS_Shape::SelectionMode(TopAbs_VERTEX));
+    for (auto& entry : shapes_) {
+        if (useModel) {
+            if (entry.visible) viewer()->displayShape(entry.aisShape, false);
+            for (auto& f : entry.faces) viewer()->removeShape(f.aisFace, false);
+        } else {
+            viewer()->removeShape(entry.aisShape, false);
+            for (auto& f : entry.faces)
+                if (entry.visible && f.visible) viewer()->displayShape(f.aisFace, false);
+        }
+    }
+    viewer()->updateViewer();
+}
+
+void Viewer::extractFaces(ShapeEntry& entry, const TopoDS_Shape& shape,
+                           float r, float g, float b,
+                           double tx, double ty, double tz) {
+    entry.faces.clear();
+    int id = 0;
+    for (TopExp_Explorer exp(shape, TopAbs_FACE); exp.More(); exp.Next()) {
+        TopoDS_Face face = TopoDS::Face(exp.Current());
+        Handle(AIS_Shape) faceAis = new AIS_Shape(face);
+        Handle(Prs3d_ShadingAspect) aspect = new Prs3d_ShadingAspect();
+        aspect->SetColor(Quantity_Color(r, g, b, Quantity_TOC_RGB));
+        faceAis->Attributes()->SetShadingAspect(aspect);
+        if (tx != 0 || ty != 0 || tz != 0) {
+            gp_Trsf trsf;
+            trsf.SetTranslation(gp_Vec(tx, ty, tz));
+            faceAis->SetLocalTransformation(trsf);
+        }
+        entry.faces.emplace_back(faceAis, id++, r, g, b);
+    }
 }
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
