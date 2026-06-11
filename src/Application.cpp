@@ -407,8 +407,10 @@ void Application::drawStatusBar() {
 
     float fps = ImGui::GetIO().Framerate;
     ImGui::Text("FPS: %.0f", fps);
-    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 200);
-    ImGui::TextDisabled("F7:Viewer  F8:Objects  F:FitAll");
+    const char* cr = "OCCT-ImGui  (c) 2026 Xiaoyang Yu";
+    float crW = ImGui::CalcTextSize(cr).x;
+    ImGui::SameLine(ImGui::GetContentRegionAvail().x - crW);
+    ImGui::TextDisabled("%s", cr);
 
     ImGui::End();
 }
@@ -532,6 +534,23 @@ void Application::drawDockSpace() {
             ImGui::MenuItem("Viewer",    "F7", &showViewerPanel_);
             ImGui::MenuItem("Objects",   "F8", &showObjectPanel_);
             ImGui::Separator();
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Settings")) {
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted("Background");
+            ImGui::SameLine(100);
+            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+            ImGui::ColorEdit3("##bg", bgColor_, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+            viewer()->setBackgroundColor(bgColor_[0], bgColor_[1], bgColor_[2]);
+            ImGui::Separator();
+            if (ImGui::BeginMenu("Projection")) {
+                if (ImGui::MenuItem("Orthographic", nullptr, orthographic_))
+                    { orthographic_ = true; viewer()->setOrthographic(true); }
+                if (ImGui::MenuItem("Perspective", nullptr, !orthographic_))
+                    { orthographic_ = false; viewer()->setOrthographic(false); }
+                ImGui::EndMenu();
+            }
             ImGui::EndMenu();
         }
         ImGui::EndMenuBar();
