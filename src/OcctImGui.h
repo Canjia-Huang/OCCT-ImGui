@@ -23,7 +23,7 @@
 #pragma once
 
 #include "Application.h"
-#include <AIS_Shape.hxx>
+#include <AIS_ColoredShape.hxx>
 #include <TopoDS_Shape.hxx>
 #include <TopoDS_Face.hxx>
 #include <TopExp_Explorer.hxx>
@@ -31,38 +31,23 @@
 
 namespace OcctImGui {
 
+/// Per-face metadata. Coloring via parent AIS_ColoredShape::SetCustomColor.
 struct FaceEntry {
-    Handle(AIS_Shape) aisFace;
+    TopoDS_Face topoFace;          ///< Face reference for SetCustomColor
     int   id = 0;
     float color[3] = {0.7f, 0.7f, 0.7f};
     bool  useCustomColor = false;
     bool  visible = true;
-    FaceEntry(const Handle(AIS_Shape)& f, int i, float r, float g, float b)
-        : aisFace(f), id(i), color{r, g, b} {}
+
+    FaceEntry(const TopoDS_Face& f, int i, float r, float g, float b)
+        : topoFace(f), id(i), color{r, g, b} {}
 };
 
+/// Main application class. Create one instance, call addShape / importFile,
+/// then run() to start the 3D viewer and UI.
 class Viewer : public Application {
 public:
-    Viewer();
-    ~Viewer() override;
-
-    void addShape(const TopoDS_Shape& shape, float r, float g, float b,
-                  const char* name = nullptr,
-                  double tx = 0, double ty = 0, double tz = 0);
-    void fitAll();
-    void importFile(const char* path);
-    void show();
-
-protected:
-    void init() override;
-    void drawGui() override;
-    void preFrame() override;
-    void postFrame() override;
-    void onImport() override;
-    void onExport() override;
-    void onImportFile(const char* path) override;
-
-private:
+    /// Per-shape data, accessible for direct manipulation.
     struct ShapeEntry {
         Handle(AIS_Shape) aisShape;
         std::string name;
@@ -78,11 +63,46 @@ private:
               tx(px), ty(py), tz(pz) {}
     };
 
+    Viewer();
+    ~Viewer() override;
+
+    /// Add a CAD model to the scene. Returns the shape index for later use
+    /// with setFaceColor.
+    /// @param shape  TopoDS_Shape to display
+    /// @param r,g,b  RGB color (0–1), used as default face color
+    /// @param name   Display name (auto-generated if null)
+    /// @param tx,ty,tz  Optional translation offset
+    int addShape(const TopoDS_Shape& shape, float r, float g, float b,
+                 const char* name = nullptr,
+                 double tx = 0, double ty = 0, double tz = 0);
+
+    /// Import a CAD file (STEP, IGES, BREP, STL) into the scene.
+    void importFile(const char* path);
+
+    /// Set a face color by shape index and face id.
+    void setFaceColor(int shapeIdx, int faceId, float r, float g, float b);
+
+protected:
+
+protected:
+    void init() override;
+    void drawGui() override;
+    void preFrame() override;
+    void postFrame() override;
+    void onImport() override;
+    void onExport() override;
+    void onImportFile(const char* path) override;
+
+    /// Fit the 3D view to show all shapes.
+    void fitAll();
+
+private:
     struct PendingShape {
         TopoDS_Shape shape;
         float r, g, b;
         std::string name;
         double tx = 0, ty = 0, tz = 0;
+        size_t shapeIdx = 0;
     };
 
     void extractFaces(ShapeEntry& entry, const TopoDS_Shape& shape,
@@ -91,19 +111,16 @@ private:
 
     void drawObjectPanel();
     void drawOverlay() override;
-    void syncShapeDisplay();
     void updateClipPlane();
-    void onClipDrag(float dx, float dy);
-    Handle(AIS_Shape) makeColoredShape(const TopoDS_Shape& shape,
-                                       float r, float g, float b,
-                                       double tx = 0, double ty = 0, double tz = 0);
+    Handle(AIS_ColoredShape) makeColoredShape(const TopoDS_Shape& shape,
+                                              float r, float g, float b,
+                                              double tx = 0, double ty = 0, double tz = 0);
 
     std::vector<ShapeEntry> shapes_;
     std::vector<PendingShape> pendingShapes_;
     std::vector<std::function<void(OcctViewer*)>> pendingActions_;
     int nextId_ = 0;
 
-    // Section plane state
     bool sectionOn_  = false;
     bool clipEditOn_ = false;
     float clipPos_   = 0.0f;
