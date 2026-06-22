@@ -407,8 +407,20 @@ void Application::drawStatusBar() {
 
     float fps = ImGui::GetIO().Framerate;
     ImGui::Text("FPS: %.0f", fps);
-    ImGui::SameLine(ImGui::GetContentRegionAvail().x - 200);
-    ImGui::TextDisabled("F7:Viewer  F8:Objects  F:FitAll");
+    ImGui::SameLine();
+    if (statusMsg_[0]) {
+        float msgW = ImGui::CalcTextSize(statusMsg_).x;
+        ImGui::SetCursorPosX((ImGui::GetWindowWidth() - msgW) * 0.5f);
+        ImGui::TextColored(ImVec4(0.0f, 0.4f, 0.8f, 1.0f), "%s", statusMsg_);
+    } else {
+        float w = ImGui::CalcTextSize("Ready").x;
+        ImGui::SetCursorPosX((ImGui::GetWindowWidth() - w) * 0.5f);
+        ImGui::TextColored(ImVec4(0.0f, 0.4f, 0.8f, 1.0f), "Ready");
+    }
+    const char* cr = "OCCT-ImGui  (c) 2026 Xiaoyang Yu";
+    { float crW = ImGui::CalcTextSize(cr).x;
+      ImGui::SameLine(ImGui::GetWindowWidth() - crW - ImGui::GetStyle().WindowPadding.x);
+      ImGui::TextDisabled("%s", cr); }
 
     ImGui::End();
 }
@@ -532,6 +544,29 @@ void Application::drawDockSpace() {
             ImGui::MenuItem("Viewer",    "F7", &showViewerPanel_);
             ImGui::MenuItem("Objects",   "F8", &showObjectPanel_);
             ImGui::Separator();
+            ImGui::EndMenu();
+        }
+        if (ImGui::BeginMenu("Settings")) {
+            ImGui::AlignTextToFramePadding();
+            ImGui::TextUnformatted("Background");
+            ImGui::SameLine(100);
+            ImGui::SetNextItemWidth(ImGui::GetContentRegionAvail().x);
+            ImGui::ColorEdit3("##bg", bgColor_, ImGuiColorEditFlags_NoInputs | ImGuiColorEditFlags_NoLabel);
+            viewer()->setBackgroundColor(bgColor_[0], bgColor_[1], bgColor_[2]);
+            if (ImGui::IsItemDeactivatedAfterEdit())
+                snprintf(statusMsg_, sizeof(statusMsg_), "Background updated");
+            ImGui::Separator();
+            if (ImGui::BeginMenu("Projection")) {
+                if (ImGui::MenuItem("Orthographic", nullptr, orthographic_)) {
+                    orthographic_ = true; viewer()->setOrthographic(true);
+                    snprintf(statusMsg_, sizeof(statusMsg_), "Projection: Orthographic");
+                }
+                if (ImGui::MenuItem("Perspective", nullptr, !orthographic_)) {
+                    orthographic_ = false; viewer()->setOrthographic(false);
+                    snprintf(statusMsg_, sizeof(statusMsg_), "Projection: Perspective");
+                }
+                ImGui::EndMenu();
+            }
             ImGui::EndMenu();
         }
         ImGui::EndMenuBar();

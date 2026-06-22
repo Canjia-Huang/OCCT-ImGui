@@ -7,6 +7,8 @@ A lightweight CAD viewer built on [OpenCASCADE](https://dev.opencascade.org/) (O
 
 **Supported platforms:** 💻 Windows · 🍎 macOS ·  *(🐧 Linux is not supported)*
 
+**Supported formats:** [.step(.stp)](https://en.wikipedia.org/wiki/ISO_10303-21) · [.iges(.igs)](https://en.wikipedia.org/wiki/IGES) · [.brep](https://dev.opencascade.org/doc/overview/html/specification__brep_format.html)
+
 ## ✨ Features
 
 - **3D Shape Viewer** — rotate/pan/zoom, section clipping, orientation gizmo for CAD models (STEP, IGES, BREP)
