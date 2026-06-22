@@ -35,67 +35,15 @@ include(Dependencies)
 ###############################################################################
 # occt-imgui library
 ###############################################################################
-set(LIB_SOURCES
-  src/Application.cpp
-  src/OcctViewer.cpp
-  src/OcctWindow.cpp
-  src/OcctImGui.cpp
-)
-
-set(LIB_HEADERS
-  src/OcctImConfig.h
-  src/Application.h
-  src/OcctViewer.h
-  src/OcctWindow.h
-  src/OcctImGui.h
-)
-
-add_library(OcctImGui STATIC ${LIB_SOURCES} ${LIB_HEADERS})
-
-target_compile_definitions(OcctImGui PRIVATE
-  FONTS_DIR="${CMAKE_SOURCE_DIR}/src/fonts"
-)
-if(WIN32)
-  target_compile_definitions(OcctImGui PUBLIC NOMINMAX WIN32_LEAN_AND_MEAN)
-endif()
+add_subdirectory(src)
 
 add_library(glad STATIC ${CMAKE_SOURCE_DIR}/third_party/glad/src/glad.c)
 target_include_directories(glad PUBLIC ${CMAKE_SOURCE_DIR}/third_party/glad/include)
 
-target_include_directories(OcctImGui PUBLIC
-  ${CMAKE_SOURCE_DIR}/src
-  ${CMAKE_SOURCE_DIR}/third_party/imoguizmo
-)
-
-target_link_libraries(OcctImGui PUBLIC
-  imgui
-  glfw
-  glad
-  OpenCASCADE::OpenCASCADE
-)
-
-if(APPLE)
-  target_link_libraries(OcctImGui PUBLIC
-    "-framework OpenGL"
-    "-framework Cocoa"
-    "-framework IOKit"
-  )
-endif()
-
-if(MSVC)
-  target_compile_options(OcctImGui PRIVATE /EHsc)
-else()
-  target_compile_options(OcctImGui PRIVATE
-    -fexceptions
-    -Wno-elaborated-enum-base
-  )
-endif()
-
 ###############################################################################
 # Demo executable
 ###############################################################################
-add_executable(OcctImGuiDemo src/main.cpp)
-target_link_libraries(OcctImGuiDemo PRIVATE OcctImGui)
+add_subdirectory(app)
 
 ###############################################################################
 # Tests

@@ -1,4 +1,4 @@
-#include "OcctImGui.h"
+#include "../include/OcctImGui.h"
 #include <BRepPrimAPI_MakeBox.hxx>
 #include <BRepPrimAPI_MakeSphere.hxx>
 #include <TopoDS_Shape.hxx>
