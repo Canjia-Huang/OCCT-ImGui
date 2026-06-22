@@ -103,17 +103,17 @@ Set `OpenCASCADE_DIR` to the directory containing `OpenCASCADEConfig.cmake`:
 
 ### Integration
 
-To use this project as a **submodule** in your own repository, follow these steps:
+To use this project as a **submodule** in your own project, follow these steps:
 1. Add the submodule:
 
     ```bash
-   git submodule add https://github.com/Xiaoyanglib/OCCT-ImGui.git [submodule dir]
+   git submodule add https://github.com/Xiaoyanglib/OCCT-ImGui.git [SubmoduleDir]
    git submodule update --init --recursive
     ```
    
 2. Configure and link the library:
     ```bash
-    add_subdirectory([submodule dir])
+    add_subdirectory([SubmoduleDir])
    target_link_libraries([Project] PRIVATE OcctImGui)
     ```
 
