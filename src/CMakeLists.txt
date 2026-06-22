@@ -13,7 +13,7 @@ target_sources(${CURRENT_LIB_NAME}
 
 target_include_directories(${CURRENT_LIB_NAME}
         PUBLIC
-        ${CMAKE_SOURCE_DIR}/include/
+        ${CMAKE_SOURCE_DIR}/include/OcctImGui/
 )
 target_include_directories(${CURRENT_LIB_NAME}
         PRIVATE
