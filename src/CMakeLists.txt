@@ -12,11 +12,12 @@ target_sources(${CURRENT_LIB_NAME}
 )
 
 target_include_directories(${CURRENT_LIB_NAME}
-        PUBLIC
-        ${CMAKE_SOURCE_DIR}/include/OcctImGui/
+        INTERFACE
+        ${CMAKE_SOURCE_DIR}/include/
 )
 target_include_directories(${CURRENT_LIB_NAME}
         PRIVATE
+        ${CMAKE_SOURCE_DIR}/include/OcctImGui/
         ${CMAKE_SOURCE_DIR}/src/
         ${CMAKE_SOURCE_DIR}/third_party/imoguizmo/
 )
