@@ -25,7 +25,7 @@
 #define IMGUI_DEFINE_MATH_OPERATORS
 #include "imoguizmo.hpp"
 
-#include "../include/OcctImGui.h"
+#include "OcctImGui.h"
 #include "OcctViewer.h"
 #include "imgui.h"
 

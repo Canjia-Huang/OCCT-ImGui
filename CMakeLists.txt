@@ -36,9 +36,7 @@ include(Dependencies)
 # occt-imgui library
 ###############################################################################
 add_subdirectory(src)
-
-add_library(glad STATIC ${CMAKE_SOURCE_DIR}/third_party/glad/src/glad.c)
-target_include_directories(glad PUBLIC ${CMAKE_SOURCE_DIR}/third_party/glad/include)
+add_subdirectory(third_party)
 
 ###############################################################################
 # Demo executable
